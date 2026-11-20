@@ -25,6 +25,7 @@ jobs:
         env:
           NAKORDONI_API_KEY: ${{ secrets.NAKORDONI_API_KEY }}
           NAKORDONI_PPID_ENTRY: ${{ secrets.NAKORDONI_PPID_ENTRY }}
+          NAKORDONI_PPID_EXIT: ${{ secrets.NAKORDONI_PPID_EXIT }}
         run: python collector.py || echo "::warning::Сборщик не получил данных — смотри data/raw/"
       - name: Forecast my trips
         run: python predict_targets.py || echo "::warning::Прогноз на поездки не посчитался"
