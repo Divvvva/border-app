@@ -1,0 +1,27 @@
+# Сбор очереди на GitLab. Расписание задаётся в интерфейсе:
+# Build → Pipeline schedules → New schedule → cron "0 * * * *" (каждый час).
+# Каждые 15 минут на бесплатном GitLab не хватит лимита (400 мин CI в месяц).
+#
+# Нужна переменная GITLAB_PUSH_TOKEN (Settings → CI/CD → Variables, Masked):
+# Settings → Access tokens → роль Maintainer, scope write_repository.
+
+stages: [collect]
+
+collect:
+  stage: collect
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git > /dev/null
+    - pip install -q requests beautifulsoup4 pandas numpy
+  script:
+    - python collector.py || echo "Сборщик не получил данных — смотри data/raw/"
+    - python predict_targets.py || echo "Прогноз на поездки не посчитался"
+    - git config user.name "border-bot"
+    - git config user.email "border-bot@noreply.gitlab.com"
+    - git add data/
+    - git diff --cached --quiet && exit 0
+    - git commit -m "data $(date -u +%Y-%m-%dT%H:%M) [skip ci]"
+    - git push "https://oauth2:${GITLAB_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:${CI_COMMIT_REF_NAME}
