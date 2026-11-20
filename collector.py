@@ -129,11 +129,56 @@ def parse_belarusborder(queue_json: dict, ts: datetime) -> list[dict]:
     return rows
 
 
+def parse_checkpoint_summary(checkpoints) -> list[dict]:
+    """Формат таблицы «Зоны ожидания» (mon.declarant.by): у каждого пункта
+    готовые счётчики countCar / countTruck / countBus."""
+    items = checkpoints.get("result", checkpoints) if isinstance(checkpoints, dict) else checkpoints
+    if not isinstance(items, list):
+        return []
+    for cp in items:
+        if not isinstance(cp, dict):
+            continue
+        name = str(cp.get("name", "")).lower()
+        if not any(alias in name for alias in config.CHECKPOINT_NAME_ALIASES):
+            continue
+        if "countBus" not in cp:
+            return []
+        note = json.dumps({k: cp.get(k) for k in ("countLiveQueue", "countBookings", "countPriority", "countAll")})
+        rows = []
+        for vtype, key in (("car", "countCar"), ("truck", "countTruck"), ("bus", "countBus")):
+            rows.append({
+                "direction": "exit_by", "vehicle_type": vtype, "queue_count": cp.get(key, ""),
+                "wait_minutes": "", "oldest_wait_min": "", "median_wait_min": "",
+                "source": "belarusborder", "note": note,
+            })
+        return rows
+    return []
+
+
 def collect_belarusborder(ts: datetime) -> list[dict]:
     r = requests.get(config.BELARUSBORDER_CHECKPOINTS_URL, headers=HEADERS, timeout=TIMEOUT)
     r.raise_for_status()
     checkpoints = r.json()
     save_raw("belarusborder_checkpoints", checkpoints)
+    summary = parse_checkpoint_summary(checkpoints)
+    if summary:
+        # Дополнительно: список машин в очереди с временем регистрации —
+        # даёт «сколько уже стоят». Если не получилось, хватит и счётчиков.
+        try:
+            cid = find_checkpoint_id(checkpoints)
+            r2 = requests.get(config.BELARUSBORDER_QUEUE_URL.format(cid=cid), headers=HEADERS, timeout=TIMEOUT)
+            r2.raise_for_status()
+            detail = r2.json()
+            save_raw("belarusborder_queue", detail)
+            ages = {r["vehicle_type"]: r for r in parse_belarusborder(detail, ts)}
+            for row in summary:
+                a = ages.get(row["vehicle_type"])
+                if a:
+                    row["oldest_wait_min"] = a["oldest_wait_min"]
+                    row["median_wait_min"] = a["median_wait_min"]
+        except Exception as e:  # noqa: BLE001
+            print(f"belarusborder: детали очереди недоступны ({e}), сохраняю только счётчики")
+        return summary
     cid = find_checkpoint_id(checkpoints)
     if not cid:
         raise RuntimeError("Брест не найден в списке пунктов belarusborder")
@@ -235,20 +280,21 @@ def main() -> int:
     ts = now_utc()
     all_rows, errors = [], []
 
-    # Выезд из Беларуси: Nakordoni (работает с серверов GitHub),
-    # белорусские сайты — только если Nakordoni не настроен или упал
+    # Выезд из Беларуси: электронная очередь (отдельно автобусы) → Nakordoni → ГПК
     exit_rows = []
-    try:
-        exit_rows = collect_nakordoni(ts, "exit_by")
-    except Exception as e:  # noqa: BLE001
-        errors.append(f"nakordoni exit: {e}")
-    if not exit_rows:
-        for name, fn in (("belarusborder", collect_belarusborder), ("gpk", collect_gpk)):
-            try:
-                exit_rows = fn(ts)
-                break
-            except Exception as e:  # noqa: BLE001
-                errors.append(f"{name}: {e}")
+    sources = (
+        ("belarusborder", collect_belarusborder),
+        ("nakordoni exit", lambda t: collect_nakordoni(t, "exit_by")),
+        ("gpk", collect_gpk),
+    )
+    for name, fn in sources:
+        try:
+            exit_rows = fn(ts)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{name}: {e}")
+            continue
+        if exit_rows:
+            break
     all_rows += exit_rows
 
     # Въезд в Беларусь
