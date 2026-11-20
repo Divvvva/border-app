@@ -12,8 +12,13 @@ GPK_NUMBER_ORDER = ["car", "truck", "bus"]
 
 # Электронная очередь Беларуси (выезд из РБ). Адреса взяты из открытых проектов,
 # при первом запуске проверь, что они отвечают (см. README, шаг 4).
-BELARUSBORDER_CHECKPOINTS_URL = "https://belarusborder.by/info/checkpoint?token=test"
-BELARUSBORDER_QUEUE_URL = "https://belarusborder.by/info/monitoring-new?token=test&checkpointId={cid}"
+# Токен общий (его использует страница mon.declarant.by), но в публичный код
+# его не кладём — он берётся из GitHub Secret / переменной BELARUSBORDER_TOKEN
+import os as _os_bb
+BELARUSBORDER_TOKEN = _os_bb.environ.get("BELARUSBORDER_TOKEN", "test")
+BELARUSBORDER_CHECKPOINTS_URL = "https://belarusborder.by/info/checkpoint?token=" + BELARUSBORDER_TOKEN
+BELARUSBORDER_QUEUE_URL = ("https://belarusborder.by/info/monitoring-new?token=" + BELARUSBORDER_TOKEN
+                           + "&checkpointId={cid}")
 
 # Nakordoni API (въезд в РБ, польская сторона). Ключ и id перехода кладутся
 # в GitHub Secrets: NAKORDONI_API_KEY, NAKORDONI_PPID_ENTRY. Без них источник пропускается.
