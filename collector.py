@@ -177,7 +177,7 @@ def collect_gpk(ts: datetime) -> list[dict]:
 
 
 # ---------------------------------------------------------------- nakordoni (въезд)
-def parse_nakordoni(payload: dict) -> list[dict]:
+def parse_nakordoni(payload: dict, direction: str = "entry_by") -> list[dict]:
     data = payload.get("data", payload)
     snap = data.get("snapshot", data) if isinstance(data, dict) else {}
     rows = []
@@ -196,16 +196,17 @@ def parse_nakordoni(payload: dict) -> list[dict]:
         rows.append({"vehicle_type": "all", "queue_count": snap.get("queue_now", ""),
                      "wait_minutes": snap.get("wait_min", "")})
     for r in rows:
-        r.update({"direction": "entry_by", "oldest_wait_min": "", "median_wait_min": "",
+        r.update({"direction": direction, "oldest_wait_min": "", "median_wait_min": "",
                   "source": "nakordoni", "note": ""})
     return rows
 
 
-def collect_nakordoni(ts: datetime) -> list[dict]:
+def collect_nakordoni(ts: datetime, direction: str = "entry_by") -> list[dict]:
     key = os.environ.get("NAKORDONI_API_KEY")
-    ppid = os.environ.get("NAKORDONI_PPID_ENTRY")
+    env_name = "NAKORDONI_PPID_ENTRY" if direction == "entry_by" else "NAKORDONI_PPID_EXIT"
+    ppid = os.environ.get(env_name)
     if not ppid:
-        print("nakordoni: пропуск (нет NAKORDONI_PPID_ENTRY)")
+        print(f"nakordoni ({direction}): пропуск (нет {env_name})")
         return []
     headers = dict(HEADERS)
     if key:
@@ -214,8 +215,8 @@ def collect_nakordoni(ts: datetime) -> list[dict]:
     r = requests.get(config.NAKORDONI_QUEUE_URL, params={"ppid": ppid}, headers=headers, timeout=TIMEOUT)
     r.raise_for_status()
     payload = r.json()
-    save_raw("nakordoni_entry", payload)
-    return parse_nakordoni(payload)
+    save_raw(f"nakordoni_{direction}", payload)
+    return parse_nakordoni(payload, direction)
 
 
 # ---------------------------------------------------------------- main
@@ -234,21 +235,27 @@ def main() -> int:
     ts = now_utc()
     all_rows, errors = [], []
 
-    # Выезд из Беларуси: основной источник, при ошибке — резерв ГПК
+    # Выезд из Беларуси: Nakordoni (работает с серверов GitHub),
+    # белорусские сайты — только если Nakordoni не настроен или упал
+    exit_rows = []
     try:
-        all_rows += collect_belarusborder(ts)
+        exit_rows = collect_nakordoni(ts, "exit_by")
     except Exception as e:  # noqa: BLE001
-        errors.append(f"belarusborder: {e}")
-        try:
-            all_rows += collect_gpk(ts)
-        except Exception as e2:  # noqa: BLE001
-            errors.append(f"gpk: {e2}")
+        errors.append(f"nakordoni exit: {e}")
+    if not exit_rows:
+        for name, fn in (("belarusborder", collect_belarusborder), ("gpk", collect_gpk)):
+            try:
+                exit_rows = fn(ts)
+                break
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{name}: {e}")
+    all_rows += exit_rows
 
     # Въезд в Беларусь
     try:
-        all_rows += collect_nakordoni(ts)
+        all_rows += collect_nakordoni(ts, "entry_by")
     except Exception as e:  # noqa: BLE001
-        errors.append(f"nakordoni: {e}")
+        errors.append(f"nakordoni entry: {e}")
 
     if all_rows:
         append_rows(all_rows, ts)
