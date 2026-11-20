@@ -1,0 +1,20 @@
+{
+ "info": {
+  "id": "a9173a85-3fc0-424c-84f0-defa632481e4",
+  "nameEn": "Brest BTS",
+  "address": "г. Брест, ул. Ковельская 3",
+  "phone": "+375(33) 323-75-89 оператор по вопросам электронной очереди (24/7 круглосуточно)",
+  "isBts": 1,
+  "name": "Брест"
+ },
+ "truckLiveQueue": [],
+ "truckPriority": [],
+ "truckGpk": [],
+ "busLiveQueue": [],
+ "busPriority": [],
+ "busRegular": [],
+ "carLiveQueue": [],
+ "carPriority": [],
+ "motorcycleLiveQueue": [],
+ "motorcyclePriority": []
+}
