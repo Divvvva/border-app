@@ -110,7 +110,9 @@ def fmt_age(age) -> str:
         return f"данные {I.fmt_h(age / 60)} назад" if age < 6000 else ""
     try:
         ts = pd.Timestamp(str(age))
-        ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts
+        if ts.tzinfo is None:
+            # Nakordoni присылает время без пояса — это их местное время, показываем как есть
+            return f"данные на {ts:%d.%m %H:%M}"
         return f"данные на {ts.tz_convert('Europe/Prague'):%d.%m %H:%M}"
     except Exception:  # noqa: BLE001
         return f"данные: {age}"
