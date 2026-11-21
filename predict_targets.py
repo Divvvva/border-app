@@ -32,12 +32,14 @@ def main() -> int:
             print(f"{trip['name']}: по направлению {trip['direction']} данных пока нет")
             continue
         when = model.trip_border_time(trip)
-        p = model.forecast_point(s, vehicle, when)
+        an = model.analog(df, trip["direction"], vehicle, when)
+        p = model.forecast_point(s, vehicle, when, an)
         if p is None:
             print(f"{trip['name']}: дата вне горизонта ({config.MAX_HORIZON_DAYS} дн.) или уже прошла")
             continue
         rows.append({"made_at": made_at.isoformat(), "trip": trip["name"], "vehicle": vehicle,
-                     **{k: (v.isoformat() if isinstance(v, pd.Timestamp) else v) for k, v in p.items()}})
+                     **{k: (v.isoformat() if isinstance(v, pd.Timestamp) else v) for k, v in p.items() if k != "analog"},
+                     "analog_median": (an or {}).get("median")})
         print(f"{trip['name']}: на границе {when:%d.%m %H:%M}, очередь ≈ {p['queue_pred']:.0f} "
               f"({p['queue_lo']:.0f}–{p['queue_hi']:.0f}), ожидание ≈ {p['wait_h_pred']:.1f} ч, "
               f"уверенность: {p['confidence']}")
