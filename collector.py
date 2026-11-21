@@ -280,11 +280,10 @@ def main() -> int:
     ts = now_utc()
     all_rows, errors = [], []
 
-    # Выезд из Беларуси: электронная очередь (отдельно автобусы) → Nakordoni → ГПК
+    # Выезд из Беларуси: электронная очередь (отдельно автобусы), резерв — ГПК
     exit_rows = []
     sources = (
         ("belarusborder", collect_belarusborder),
-        ("nakordoni exit", lambda t: collect_nakordoni(t, "exit_by")),
         ("gpk", collect_gpk),
     )
     for name, fn in sources:
@@ -297,11 +296,8 @@ def main() -> int:
             break
     all_rows += exit_rows
 
-    # Въезд в Беларусь
-    try:
-        all_rows += collect_nakordoni(ts, "entry_by")
-    except Exception as e:  # noqa: BLE001
-        errors.append(f"nakordoni entry: {e}")
+    # Nakordoni в архив НЕ пишем: их условия запрещают хранить отдельные значения.
+    # Их данные показываются вживую в приложении (app.py), см. README.
 
     if all_rows:
         append_rows(all_rows, ts)
