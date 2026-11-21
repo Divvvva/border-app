@@ -25,6 +25,7 @@ BELARUSBORDER_QUEUE_URL = ("https://belarusborder.by/info/monitoring-new?token="
 NAKORDONI_QUEUE_URL = "https://nakordoni.eu/api/v1/data/queue"
 
 DATA_FILE = "data/queue.csv"
+ARCHIVE_FILE = "data/archive.csv"  # архив gpk.gov.by со скриншотов (каждые 2 часа, выезд из РБ)
 # Если приложение живёт отдельно от данных (например, данные на GitLab),
 # укажи в переменной окружения DATA_URL raw-ссылку на queue.csv
 import os as _os
@@ -33,7 +34,7 @@ RAW_DIR = "data/raw"  # последние ответы источников, д
 
 # Сколько автобусов в час проходит пункт пропуска, если своей истории ещё мало.
 # Это стартовая оценка, модель заменит её реальной по данным.
-DEFAULT_BUSES_PER_HOUR = 2.0
+DEFAULT_BUSES_PER_HOUR = 5.0  # по ночным спадам в архиве ГПК (дек. 2024/2025): ≥4–6 автобусов/ч
 DEFAULT_CARS_PER_HOUR = 2350 / 24  # пропускная способность Бреста по данным ГПК
 
 # Время в пути до границы (часы), можно менять в приложении
@@ -53,13 +54,10 @@ HOLIDAY_SEASON = ("2026-12-20", "2027-01-10")
 # direction: entry_by = въезд в Беларусь (Прага → Витебск), exit_by = выезд (Витебск → Прага)
 # departure — время отправления автобуса (местное время города отправления)
 MY_TRIPS = [
-    {"name": "Домой 28.12", "direction": "entry_by", "vehicle": "bus",
-     "departure": "2026-12-28T08:00", "departure_tz": "Europe/Prague", "travel_hours": 10.0},
-    {"name": "Домой 29.12", "direction": "entry_by", "vehicle": "bus",
-     "departure": "2026-12-29T08:00", "departure_tz": "Europe/Prague", "travel_hours": 10.0},
-    # Обратно — впиши дату, когда определишься:
-    # {"name": "Обратно 05.01", "direction": "exit_by", "vehicle": "bus",
-    #  "departure": "2027-01-05T20:00", "departure_tz": "Europe/Minsk", "travel_hours": 9.5},
+    {"name": "Туда 19.12 (Прага → Минск)", "direction": "entry_by", "vehicle": "bus",
+     "departure": "2026-12-19T20:50", "departure_tz": "Europe/Prague", "travel_hours": 11.5},
+    {"name": "Обратно 28.12 (Минск → Прага)", "direction": "exit_by", "vehicle": "bus",
+     "departure": "2026-12-28T20:00", "departure_tz": "Europe/Minsk", "travel_hours": 5.0},
 ]
 FORECAST_LOG = "data/forecast_log.csv"
 MAX_HORIZON_DAYS = 60
