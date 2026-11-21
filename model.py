@@ -195,7 +195,8 @@ def forecast_point(s: pd.DataFrame, vehicle: str, when: pd.Timestamp, an: dict |
     horizon_d = (when - now).total_seconds() / 86400
     if horizon_d < 0 or horizon_d > config.MAX_HORIZON_DAYS:
         return None
-    history_d = (now - q.index.min()).total_seconds() / 86400
+    own = s[s["is_archive"] < 0.5]["queue_count"].dropna() if "is_archive" in s else q
+    history_d = (now - own.index.min()).total_seconds() / 86400 if not own.empty else 0.0
     tp = throughput_per_hour(s, vehicle)
 
     if horizon_d <= 7:
@@ -308,3 +309,100 @@ def backtest(s: pd.DataFrame, vehicle: str, test_days: int = 3) -> dict | None:
         "mae_naive": float((naive - joined.actual).abs().mean()),
         "hours": len(joined),
     }
+
+
+# ---------------------------------------------------------------- прогноз на месяц (для графика)
+def horizon_hourly(df: pd.DataFrame, direction: str, vehicle: str, days: int = 30) -> pd.DataFrame:
+    """Почасовой прогноз на `days` дней: первые 7 дней — с учётом текущей ситуации,
+    дальше — профиль × праздники × тренд; в праздники не ниже архива прошлых лет."""
+    s = series(df, direction, vehicle)
+    q = s["queue_count"].dropna() if not s.empty else pd.Series(dtype=float)
+    if q.empty:
+        return pd.DataFrame()
+    now = q.index.max()
+    idx = pd.date_range(now.floor("h") + pd.Timedelta(hours=1), periods=days * 24, freq="1h", tz=TZ)
+    prof = build_profile(s, weeks=8)
+    flags = holiday_flags(idx)
+    trend0 = level_trend(s)
+    hf = prof["holiday_factor"]
+    rows = []
+    for ts, hol in zip(idx, flags):
+        h = (ts - now).total_seconds() / 86400
+        med, lo, hi = profile_value(prof, ts)
+        f = hf if hol else 1.0
+        tr = 1 + (trend0 - 1) * np.exp(-h / 21)
+        pred = med * f * tr
+        widen = 1 + h / 14
+        rows.append({"ts": ts, "pred": pred, "lo": max(0.0, pred - (med - lo) * f * widen),
+                     "hi": pred + (hi - med) * f * widen, "holiday": bool(hol)})
+    out = pd.DataFrame(rows).set_index("ts")
+    short = forecast(s, vehicle, days=7)
+    if not short.empty:
+        common = out.index.intersection(short.index)
+        out.loc[common, "pred"] = short.loc[common, "queue_pred"]
+        out.loc[common, "lo"] = short.loc[common, "queue_lo"]
+        out.loc[common, "hi"] = short.loc[common, "queue_hi"]
+    # праздники: не ниже того, что было в эти дни в прошлые годы
+    for ts in out.index[out["holiday"]]:
+        an = analog(df, direction, vehicle, ts, hour_window=1.0)
+        if an:
+            out.loc[ts, "pred"] = max(out.loc[ts, "pred"], an["median"])
+            out.loc[ts, "hi"] = max(out.loc[ts, "hi"], an["max"])
+    out["lo"] = out["lo"].clip(lower=0)
+    out.attrs["throughput"] = throughput_per_hour(s, vehicle)
+    return out
+
+
+def daily_summary(h: pd.DataFrame) -> pd.DataFrame:
+    """Один ряд на день: типичная очередь (среднее за сутки), спокойный и пиковый час."""
+    if h.empty:
+        return h
+    g = h.groupby(h.index.date)
+    d = pd.DataFrame({"typical": g["pred"].mean(), "quiet": g["pred"].min(),
+                      "peak": g["pred"].max(), "holiday": g["holiday"].max()})
+    d.index = pd.to_datetime(d.index)
+    tp = h.attrs.get("throughput", config.DEFAULT_BUSES_PER_HOUR)
+    d["wait_typical_h"] = d["typical"] / tp
+    return d
+
+
+def last_year_daily(df: pd.DataFrame, direction: str, vehicle: str, dates) -> pd.Series:
+    """Средняя очередь за те же календарные дни год назад (архив ГПК)."""
+    a = df[(df.direction == direction) & (df.vehicle_type == vehicle) & (df.source == "gpk_archive")]
+    a = a.dropna(subset=["queue_count"])
+    if a.empty:
+        return pd.Series(dtype=float)
+    daily = a.groupby(a.ts.dt.date)["queue_count"].mean()
+    vals = {}
+    for d in dates:
+        try:
+            prev = (pd.Timestamp(d) - pd.DateOffset(years=1)).date()
+        except Exception:  # noqa: BLE001
+            continue
+        if prev in daily.index:
+            vals[pd.Timestamp(d)] = float(daily[prev])
+    return pd.Series(vals, dtype=float)
+
+
+def day_parts(h: pd.DataFrame, day) -> pd.DataFrame:
+    """Утро / день / вечер / ночь для выбранного дня."""
+    parts = {"🌅 Утро (6–12)": (6, 12), "☀️ День (12–18)": (12, 18),
+             "🌆 Вечер (18–24)": (18, 24), "🌙 Ночь (0–6)": (0, 6)}
+    x = h[h.index.date == pd.Timestamp(day).date()]
+    rows = []
+    for name, (a, b) in parts.items():
+        y = x[(x.index.hour >= a) & (x.index.hour < b)]
+        if not y.empty:
+            rows.append({"part": name, "pred": float(y["pred"].mean()), "hi": float(y["hi"].mean())})
+    return pd.DataFrame(rows)
+
+
+def level(wait_h: float) -> tuple[str, str]:
+    """Светофор по ожиданию (часы)."""
+    if wait_h is None or pd.isna(wait_h):
+        return "⚪", "нет данных"
+    if wait_h < config.GREEN_MAX_H:
+        return "🟢", "спокойно"
+    if wait_h < config.YELLOW_MAX_H:
+        return "🟡", "средняя загрузка"
+    return "🔴", "пик"
