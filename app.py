@@ -91,10 +91,29 @@ def nakordoni_live(ppid: str):
                     return f
         return None
 
-    return {"queue": find(payload, ["queue_now", "queue", "count"]),
-            "wait_min": find(payload, ["wait_min", "wait_minutes", "wait"]),
-            "age": find(payload, ["data_age", "age", "updated_at", "observed_at"]),
+    # По документации Nakordoni текущие значения лежат в data.snapshot
+    data = payload.get("data", payload) if isinstance(payload, dict) else {}
+    snap = data.get("snapshot") if isinstance(data, dict) and isinstance(data.get("snapshot"), dict) else None
+    scope = snap if snap is not None else payload
+    return {"queue": find(scope, ["queue_now", "queue", "vehicles", "count"]),
+            "wait_min": find(scope, ["wait_min", "wait_minutes"]),
+            "age": find(scope, ["updated_at", "observed_at", "last_observation", "timestamp", "data_age", "age"]),
+            "from_snapshot": snap is not None,
             "raw": payload}
+
+
+def fmt_age(age) -> str:
+    """Время данных Nakordoni: метка времени или «N мин назад»."""
+    if age is None:
+        return ""
+    if isinstance(age, (int, float)):
+        return f"данные {I.fmt_h(age / 60)} назад" if age < 6000 else ""
+    try:
+        ts = pd.Timestamp(str(age))
+        ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts
+        return f"данные на {ts.tz_convert('Europe/Prague'):%d.%m %H:%M}"
+    except Exception:  # noqa: BLE001
+        return f"данные: {age}"
 
 
 def nakordoni_safe(secret_name: str):
@@ -150,8 +169,9 @@ with c1:
     if nk and (nk["queue"] is not None or nk["wait_min"] is not None):
         w = nk["wait_min"] / 60 if isinstance(nk["wait_min"], (int, float)) else None
         html += (f'<div class="big">{I.level(w)[0]} {I.fmt_h(w)}</div>'
-                 f'<div class="sub">автобусов в очереди: {nk["queue"] if nk["queue"] is not None else "—"}</div>'
-                 '<div class="muted">Data by nakordoni.eu</div>')
+                 '<div class="sub">весь переход, оценка Nakordoni · автобусов в очереди: '
+                 f'{nk["queue"] if nk["queue"] is not None else "—"}</div>'
+                 f'<div class="muted">{fmt_age(nk["age"])} · Data by nakordoni.eu</div>')
     else:
         html += '<div class="big">—</div><div class="sub">Нет живых данных Nakordoni</div>'
     card(html)
