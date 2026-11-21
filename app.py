@@ -79,9 +79,10 @@ def my_trips_block():
             an = model.analog(df, trip["direction"], vehicle, when) if not s.empty else None
             p = model.forecast_point(s, vehicle, when, an) if not s.empty else None
             if p is None:
-                st.info("Пока нет данных по этому направлению"
-                        + (" (для въезда нужен ключ Nakordoni, см. README)" if trip["direction"] == "entry_by" else "")
-                        + " или дата дальше горизонта прогноза.")
+                st.info("Для въезда в Беларусь пока нет своей истории: электронная очередь и архив ГПК "
+                        "считают только выезд. Ориентируйся на живые данные Nakordoni выше."
+                        if trip["direction"] == "entry_by" else
+                        "Пока нет данных по этому направлению или дата дальше горизонта прогноза.")
             else:
                 show_point(p, VEHICLES[vehicle].lower())
             if log is not None:
@@ -171,10 +172,12 @@ def direction_tab(direction: str, title: str):
 
     # --- Мой рейс
     st.subheader("🎫 Мой рейс")
-    route = "Витебск → Брест" if direction == "exit_by" else "Прага → Тересполь"
+    route = "Минск → Брест" if direction == "exit_by" else "Прага → Тересполь"
+    my = next((tr for tr in config.MY_TRIPS if tr["direction"] == direction), None)
+    dflt = pd.Timestamp(my["departure"]) if my else pd.Timestamp.now()
     a, b, c = st.columns(3)
-    dep_date = a.date_input("Дата отправления", key=f"d_{direction}")
-    dep_time = b.time_input("Время отправления", value=time(20, 0), key=f"t_{direction}")
+    dep_date = a.date_input("Дата отправления", value=dflt.date(), key=f"d_{direction}")
+    dep_time = b.time_input("Время отправления", value=dflt.time(), key=f"t_{direction}")
     hours = c.number_input(f"Часов в пути ({route})", 1.0, 30.0, config.TRAVEL_HOURS[route], 0.5, key=f"h_{direction}")
     dep_tz = "Europe/Minsk" if direction == "exit_by" else "Europe/Prague"
     dep = pd.Timestamp(datetime.combine(dep_date, dep_time)).tz_localize(dep_tz)
@@ -209,10 +212,28 @@ def nakordoni_live(ppid: str):
                      headers={"Authorization": f"Bearer {key}"}, timeout=20)
     r.raise_for_status()
     payload = r.json()
-    data = payload.get("data", {}) if isinstance(payload, dict) else {}
-    snap = data.get("snapshot", data) if isinstance(data, dict) else {}
-    return {"queue": snap.get("queue_now"), "wait_min": snap.get("wait_min"),
-            "age": snap.get("data_age") or snap.get("age") or snap.get("updated_at"), "raw": snap}
+
+    def find(obj, keys):
+        """Ищем первое значение по любому из ключей на любой глубине ответа."""
+        if isinstance(obj, dict):
+            for k in keys:
+                if k in obj and not isinstance(obj[k], (dict, list)):
+                    return obj[k]
+            for v in obj.values():
+                f = find(v, keys)
+                if f is not None:
+                    return f
+        elif isinstance(obj, list):
+            for v in obj:
+                f = find(v, keys)
+                if f is not None:
+                    return f
+        return None
+
+    return {"queue": find(payload, ["queue_now", "queue", "count"]),
+            "wait_min": find(payload, ["wait_min", "wait_minutes", "wait"]),
+            "age": find(payload, ["data_age", "age", "updated_at", "observed_at"]),
+            "raw": payload}
 
 
 def nakordoni_block():
