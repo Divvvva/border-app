@@ -2,8 +2,8 @@ name: collect-border-queue
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # каждые 15 минут (GitHub может запускать с задержкой)
-  workflow_dispatch:          # кнопка ручного запуска
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -27,14 +29,16 @@ jobs:
           NAKORDONI_PPID_ENTRY: ${{ secrets.NAKORDONI_PPID_ENTRY }}
           NAKORDONI_PPID_EXIT: ${{ secrets.NAKORDONI_PPID_EXIT }}
           BELARUSBORDER_TOKEN: ${{ secrets.BELARUSBORDER_TOKEN }}
-        run: python collector.py || echo "::warning::Сборщик не получил данных — смотри data/raw/"
+        run: python collector.py || echo "::warning::No data collected"
       - name: Forecast my trips
-        run: python predict_targets.py || echo "::warning::Прогноз на поездки не посчитался"
+        run: python predict_targets.py || echo "::warning::Trip forecast failed"
       - name: Commit data
         run: |
           git config user.name "border-bot"
           git config user.email "border-bot@users.noreply.github.com"
-          git add data/
-          git diff --cached --quiet || git commit -m "data $(date -u +%Y-%m-%dT%H:%M)"
-          git pull --rebase --autostash || true
-          git push
+          for f in data/queue.csv data/forecast_log.csv; do
+            [ -f "$f" ] && git add "$f"
+          done
+          git diff --cached --quiet && exit 0
+          git commit -m "data $(date -u +%Y-%m-%dT%H:%M)"
+          git push || (git pull --rebase --autostash && git push)
