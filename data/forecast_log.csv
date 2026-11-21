@@ -1,2 +1,3 @@
 made_at,trip,vehicle,target_ts,queue_pred,queue_lo,queue_hi,wait_h_pred,wait_h_lo,wait_h_hi,horizon_days,history_days,holiday,holiday_factor,confidence,holiday_factor_learned,analog_median
 2026-11-21T23:40:00+03:00,Обратно 28.12 (Минск → Прага),bus,2026-12-29T01:00:00+03:00,17.25,0.0,33.1240625,3.45,0.0,6.6248125,37.1,969.0,True,1.3,низкая,False,17.25
+2026-11-21T23:45:00+03:00,Обратно 28.12 (Минск → Прага),bus,2026-12-29T01:00:00+03:00,17.25,0.0,33.12046875,3.45,0.0,6.62409375,37.1,969.0,True,1.3,низкая,False,17.25
