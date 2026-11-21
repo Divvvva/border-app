@@ -190,6 +190,57 @@ def direction_tab(direction: str, title: str):
         st.write(f"Коэффициент праздников: {fc.attrs.get('holiday_factor', 1):.2f}")
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def nakordoni_live(ppid: str):
+    """Живые данные Nakordoni. Не сохраняются никуда (условия API), кэш 10 минут."""
+    import requests
+
+    try:
+        key = st.secrets["NAKORDONI_API_KEY"]
+    except Exception:  # noqa: BLE001
+        return None
+    r = requests.get("https://nakordoni.eu/api/v1/data/queue", params={"ppid": ppid},
+                     headers={"Authorization": f"Bearer {key}"}, timeout=20)
+    r.raise_for_status()
+    payload = r.json()
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    snap = data.get("snapshot", data) if isinstance(data, dict) else {}
+    return {"queue": snap.get("queue_now"), "wait_min": snap.get("wait_min"),
+            "age": snap.get("data_age") or snap.get("age") or snap.get("updated_at"), "raw": snap}
+
+
+def nakordoni_block():
+    st.subheader("📡 Сейчас по данным Nakordoni (автобусы)")
+    try:
+        ppids = {"➡️ Туда: Тересполь → Брест": st.secrets["NAKORDONI_PPID_ENTRY"],
+                 "⬅️ Обратно: Брест → Тересполь": st.secrets["NAKORDONI_PPID_EXIT"]}
+    except Exception:  # noqa: BLE001
+        st.caption("Не настроено: добавь NAKORDONI_API_KEY, NAKORDONI_PPID_ENTRY и "
+                   "NAKORDONI_PPID_EXIT в Secrets приложения на Streamlit (см. README).")
+        return
+    cols = st.columns(len(ppids))
+    for col, (label, ppid) in zip(cols, ppids.items()):
+        with col:
+            try:
+                d = nakordoni_live(ppid)
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"{label}: Nakordoni не ответил ({e})")
+                continue
+            if not d:
+                continue
+            w = d["wait_min"]
+            st.metric(label, fmt_h(w / 60) if isinstance(w, (int, float)) else "—",
+                      help="Оценка ожидания по данным Nakordoni")
+            if d["queue"] is not None:
+                st.caption(f"В очереди: {d['queue']}" + (f" · данные: {d['age']}" if d["age"] else ""))
+            if d["wait_min"] is None and d["queue"] is None:
+                with st.expander("Ответ API"):
+                    st.json(d["raw"])
+    st.caption("Data by [nakordoni.eu](https://nakordoni.eu) · показывается вживую, не сохраняется.")
+
+
+nakordoni_block()
+st.divider()
 my_trips_block()
 st.divider()
 
