@@ -16,7 +16,7 @@ import model
 st.set_page_config(page_title="Граница Брест – Тересполь", page_icon="🚌", layout="wide")
 st.title("🚌 Брест – Тересполь: очередь и прогноз")
 
-if not config.DATA_URL and not os.path.exists(config.DATA_FILE):
+if not config.DATA_URL and not os.path.exists(config.DATA_FILE) and not os.path.exists(config.ARCHIVE_FILE):
     st.warning("Данных пока нет. Сборщик запускается каждые 15 минут — загляни чуть позже.")
     st.stop()
 
@@ -56,6 +56,10 @@ def show_point(p: dict, what: str):
         note += (f" · Праздничный период: ×{p['holiday_factor']:.2f} "
                  + ("(по данным)" if p["holiday_factor_learned"] else "(пока предположение, уточнится по данным)"))
     st.caption(note)
+    an = p.get("analog")
+    if an:
+        yrs = ", ".join(f"{x['year']}: {x['value']:.0f}" for x in an["years"])
+        st.caption(f"📚 В прошлые годы в этот день и час ({what}): {yrs} — по архиву ГПК")
 
 
 def my_trips_block():
@@ -71,7 +75,9 @@ def my_trips_block():
             vehicle, s = "car", model.series(df, trip["direction"], "car")
         with st.container(border=True):
             st.markdown(f"**{trip['name']}** · {'въезд в Беларусь' if trip['direction'] == 'entry_by' else 'выезд из Беларуси'}")
-            p = model.forecast_point(s, vehicle, model.trip_border_time(trip)) if not s.empty else None
+            when = model.trip_border_time(trip)
+            an = model.analog(df, trip["direction"], vehicle, when) if not s.empty else None
+            p = model.forecast_point(s, vehicle, when, an) if not s.empty else None
             if p is None:
                 st.info("Пока нет данных по этому направлению"
                         + (" (для въезда нужен ключ Nakordoni, см. README)" if trip["direction"] == "entry_by" else "")
@@ -173,7 +179,7 @@ def direction_tab(direction: str, title: str):
     dep_tz = "Europe/Minsk" if direction == "exit_by" else "Europe/Prague"
     dep = pd.Timestamp(datetime.combine(dep_date, dep_time)).tz_localize(dep_tz)
     arrival = (dep + pd.Timedelta(hours=hours)).tz_convert(model.TZ)
-    p = model.forecast_point(s, vehicle, arrival)
+    p = model.forecast_point(s, vehicle, arrival, model.analog(df, direction, vehicle, arrival))
     if p is None:
         st.info(f"Автобус будет на границе {arrival:%d.%m %H:%M}. Прогноз строится максимум на "
                 f"{config.MAX_HORIZON_DAYS} дней вперёд.")
