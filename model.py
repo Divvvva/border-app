@@ -20,14 +20,24 @@ import pandas as pd
 import config
 
 TZ = "Europe/Minsk"
-SOURCE_PRIORITY = {"belarusborder": 0, "nakordoni": 0, "gpk": 1}
+SOURCE_PRIORITY = {"belarusborder": 0, "nakordoni": 0, "gpk": 1, "gpk_archive": 2}
 HALF_LIFE_H = 6.0
 DEFAULT_HOLIDAY_FACTOR = 1.3
 
 
-def load(path: str | None = None) -> pd.DataFrame:
+def load(path: str | None = None, with_archive: bool = True) -> pd.DataFrame:
     path = path or config.DATA_URL or config.DATA_FILE
-    df = pd.read_csv(path)
+    import os
+    if path == config.DATA_FILE and not os.path.exists(path):
+        df = pd.DataFrame(columns=["ts_utc", "direction", "vehicle_type", "queue_count", "wait_minutes",
+                                   "oldest_wait_min", "median_wait_min", "source", "note"])
+    else:
+        df = pd.read_csv(path)
+    arch = getattr(config, "ARCHIVE_FILE", "")
+    if with_archive and arch and path == config.DATA_FILE:
+        import os
+        if os.path.exists(arch):
+            df = pd.concat([pd.read_csv(arch), df], ignore_index=True)
     df["ts"] = pd.to_datetime(df["ts_utc"], utc=True).dt.tz_convert(TZ)
     for c in ["queue_count", "wait_minutes", "oldest_wait_min", "median_wait_min"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -41,8 +51,9 @@ def series(df: pd.DataFrame, direction: str, vehicle: str) -> pd.DataFrame:
     if d.empty:
         return d
     d = d.sort_values(["ts", "prio"]).drop_duplicates("ts", keep="first")
-    d = d.set_index("ts")[["queue_count", "wait_minutes", "oldest_wait_min", "median_wait_min"]]
-    return d.resample("15min").mean().interpolate(limit=4)
+    d["is_archive"] = (d["source"] == "gpk_archive").astype(float)
+    d = d.set_index("ts")[["queue_count", "wait_minutes", "oldest_wait_min", "median_wait_min", "is_archive"]]
+    return d.resample("15min").mean().interpolate(limit=8, limit_area="inside")
 
 
 def holiday_flags(index: pd.DatetimeIndex) -> np.ndarray:
@@ -56,17 +67,26 @@ def holiday_flags(index: pd.DatetimeIndex) -> np.ndarray:
 
 
 def throughput_per_hour(s: pd.DataFrame, vehicle: str) -> float:
-    """Сколько машин в час уходит из очереди (по положительным падениям)."""
+    """Сколько машин в час уходит из очереди.
+    Считаем только по плотным собственным данным (последние 14 дней, шаг 15 мин,
+    заполнено ≥70%). Архив снят раз в 2 часа — по нему убывание очереди занижено."""
     default = config.DEFAULT_BUSES_PER_HOUR if vehicle == "bus" else config.DEFAULT_CARS_PER_HOUR
-    if s.empty or len(s) < 16:
+    if s.empty:
         return default
-    q = s["queue_count"].dropna()
+    own = s[s["is_archive"] < 0.5] if "is_archive" in s else s
+    if own.empty:
+        return default
+    recent = own[own.index >= own.index.max() - pd.Timedelta(days=14)]
+    q = recent["queue_count"]
+    if len(q) < 96 * 7 or q.notna().mean() < 0.7:
+        return default
+    q = q.dropna()
     drops = (-q.diff()).clip(lower=0)
     hourly = drops.resample("1h").sum()
-    hourly = hourly[q.resample("1h").mean() > 0]  # только часы, когда очередь была
-    if len(hourly) < 6:
+    hourly = hourly[q.resample("1h").mean() > 0]
+    if len(hourly) < 24:
         return default
-    est = float(hourly.quantile(0.75))  # падения занижены из-за новых приезжающих
+    est = float(hourly.quantile(0.75))
     return est if est >= 0.5 else default
 
 
@@ -159,7 +179,7 @@ def level_trend(s: pd.DataFrame) -> float:
     return float(np.clip(last.median() / prev.median(), 0.7, 1.5))
 
 
-def forecast_point(s: pd.DataFrame, vehicle: str, when: pd.Timestamp) -> dict | None:
+def forecast_point(s: pd.DataFrame, vehicle: str, when: pd.Timestamp, an: dict | None = None) -> dict | None:
     """Прогноз на конкретный момент, в том числе через несколько недель.
 
     Ближе 7 дней — обычный почасовой прогноз (с учётом текущей ситуации).
@@ -198,6 +218,11 @@ def forecast_point(s: pd.DataFrame, vehicle: str, when: pd.Timestamp) -> dict | 
         lo = max(0.0, pred - (med - lo) * f * widen)
         hi = pred + (hi - med) * f * widen
 
+    # Праздник и есть архив прошлых лет на эту дату → не ниже, чем бывало раньше
+    if an and hol:
+        pred = max(pred, an["median"])
+        hi = max(hi, an["max"])
+
     # Минимальная честная неопределённость: растёт с горизонтом
     rel = 0.15 + 0.02 * horizon_d
     lo = min(lo, pred * (1 - rel))
@@ -216,7 +241,34 @@ def forecast_point(s: pd.DataFrame, vehicle: str, when: pd.Timestamp) -> dict | 
         "horizon_days": round(horizon_d, 1), "history_days": round(history_d, 1),
         "holiday": hol, "holiday_factor": float(hf), "confidence": conf,
         "holiday_factor_learned": bool(hf != DEFAULT_HOLIDAY_FACTOR),
+        "analog": an,
     }
+
+
+def analog(df: pd.DataFrame, direction: str, vehicle: str, when: pd.Timestamp,
+           hour_window: float = 2.0) -> dict | None:
+    """Что было в ПРОШЛЫЕ годы в тот же календарный день и час (архив ГПК).
+    Нужен для праздников: своей истории праздников у сборщика ещё нет."""
+    d = df[(df.direction == direction) & (df.vehicle_type == vehicle)
+           & (df.source == "gpk_archive")].dropna(subset=["queue_count"])
+    if d.empty:
+        return None
+    when = when.tz_convert(TZ) if when.tzinfo else when.tz_localize(TZ)
+    vals = []
+    for y in sorted(set(d.ts.dt.year)):
+        if y >= when.year:
+            continue
+        try:
+            center = when.replace(year=y)
+        except ValueError:
+            continue
+        near = d[(d.ts - center).abs() <= pd.Timedelta(hours=hour_window)]
+        if not near.empty:
+            vals.append({"year": int(y), "value": float(near.queue_count.mean())})
+    if not vals:
+        return None
+    v = [x["value"] for x in vals]
+    return {"median": float(np.median(v)), "max": float(max(v)), "years": vals}
 
 
 def trip_border_time(trip: dict) -> pd.Timestamp:
