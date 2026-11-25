@@ -65,3 +65,6 @@ ts_utc,direction,vehicle_type,queue_count,wait_minutes,oldest_wait_min,median_wa
 2026-11-25T00:08:40+00:00,exit_by,car,117,,,,belarusborder,"{""countLiveQueue"": 118, ""countBookings"": 0, ""countPriority"": 0, ""countAll"": 118}"
 2026-11-25T00:08:40+00:00,exit_by,truck,0,,,,belarusborder,"{""countLiveQueue"": 118, ""countBookings"": 0, ""countPriority"": 0, ""countAll"": 118}"
 2026-11-25T00:08:40+00:00,exit_by,bus,1,,,,belarusborder,"{""countLiveQueue"": 118, ""countBookings"": 0, ""countPriority"": 0, ""countAll"": 118}"
+2026-11-25T08:35:23+00:00,exit_by,car,43,,,,belarusborder,"{""countLiveQueue"": 43, ""countBookings"": 0, ""countPriority"": 0, ""countAll"": 43}"
+2026-11-25T08:35:23+00:00,exit_by,truck,0,,,,belarusborder,"{""countLiveQueue"": 43, ""countBookings"": 0, ""countPriority"": 0, ""countAll"": 43}"
+2026-11-25T08:35:23+00:00,exit_by,bus,0,,,,belarusborder,"{""countLiveQueue"": 43, ""countBookings"": 0, ""countPriority"": 0, ""countAll"": 43}"
